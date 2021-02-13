@@ -1,0 +1,26 @@
+[
+  {
+    "targets": ["cloudflare.com:443"],
+    "labels": {
+      "__metrics_path__": "/probe",
+      "__param_module": "http_2xx",
+      "__scheme__": "http",
+      "environment": "prod",
+      "product": "dns",
+      "severity": "critical",
+      "job": "blackbox_exporter"
+    }
+  },
+  {
+    "targets": ["onkeldom.github.io:443"],
+    "labels": {
+      "__metrics_path__": "/probe",
+      "__param_module": "http_2xx",
+      "__scheme__": "http",
+      "environment": "prod",
+      "product": "web",
+      "severity": "critical",
+      "job": "blackbox_exporter"
+    }
+  }
+]

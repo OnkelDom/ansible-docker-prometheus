@@ -1,0 +1,198 @@
+---
+- hosts:
+    - all
+  vars:
+    docker_folder_config: /opt/docker-config
+    docker_folder_data: /opt/docker-data
+    ## USED IN: ansible-role-docker
+    docker_users:
+      - pi
+  roles:
+    - ansible-role-docker
+    - ansible-role-node-exporter
+  tasks:
+    - name: create docker base folders defined in vars
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ docker_owner }}"
+        group: "{{ docker_owner }}"
+      with_items:
+        - "{{ docker_folder_config }}"
+        - "{{ docker_folder_data }}"
+      tags: docker-container
+
+    - name: create docker config subfolders defined in files/
+      file:
+        path: "{{ docker_folder_config }}/{{ item.path }}"
+        state: directory
+        mode:  '0775'
+        owner: "{{ docker_owner }}"
+        group: "{{ docker_owner }}"
+      with_filetree: ../files/
+      when: item.state == 'directory'
+      tags: docker-container
+
+    - name: copy all docker configs
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ docker_folder_config }}/{{ item.path }}"
+        mode: '0644'
+        owner: "{{ docker_owner }}"
+        group: "{{ docker_owner }}"
+      with_filetree: ../files/
+      # combinations of 'is' and 'is not' can be used below.
+      when: item.state == 'file' 
+            #and item.path is not search("excludedDir/*")
+            #and item.path is not search("*.bak")
+      tags: docker-container
+
+#    - name: register remote files
+#     shell: "find {{ docker_folder_config }}/ -printf '%P\n'"
+#      register: remote_files
+#      tags: docker-container
+
+#    - name: register local files
+#      shell: "find ../files/ -printf '%P\n'"
+#      register: local_files
+#      delegate_to: localhost
+#      tags: docker-container
+  
+#    - name: define files to remove
+#      set_fact:
+#        remove_files: "{{ remote_files.stdout_lines | difference(local_files.stdout_lines) }}"
+#      tags: docker-container
+
+#    - name: files to remove
+#      debug:
+#        msg: "Remove local not existing configs: {{ remove_files }}"
+#      tags: docker-container
+
+#    - name: remove local not existing configs
+#      file:
+#        path: "{{ docker_folder_config }}/{{ item }}"
+#        state: absent
+#      with_items: "{{ remove_files }}"
+#      tags: docker-container
+
+    - name: create docker data folders
+      file:
+        path: "{{ docker_folder_data }}/{{ item }}"
+        state: directory
+        mode:  '0775'
+        owner: "{{ docker_owner }}"
+        group: "{{ docker_owner }}"
+      with_items:
+        - alertmanager
+        - prometheus
+        - grafana
+      tags: docker-container
+
+    - name: create docker volumes
+      docker_volume:
+        name: "{{ item }}"
+        driver_options:
+          o: bind
+          type: none
+          device: "{{ docker_folder_data }}/{{ item }}"
+      with_items:
+        - alertmanager
+        - prometheus
+        - grafana
+      tags: docker-container
+
+    - name: generate docker proxy network
+      docker_network:
+        name: proxy
+        driver:  bridge
+        ipam_config:
+          - subnet: 192.168.2.0/26
+            gateway: 192.168.2.1
+            iprange: 192.168.2.0/26
+      tags: docker-container
+    
+    - name: docker-container prometheus
+      docker_container:
+        name: prometheus
+        hostname: prometheus
+        image: prom/prometheus
+        restart_policy: on-failure
+        restart_retries: 3
+        cleanup: yes
+        purge_networks: yes
+        networks:
+          - name: proxy
+        ports:
+          - 9090:9090
+        volumes:
+          - "/etc/timezone:/etc/timezone:ro"
+          - "/etc/localtime:/etc/localtime:ro"
+          - "{{ docker_folder_config }}:/etc/prometheus:ro"
+          - "prometheus:/prometheus"
+      tags: docker-containers
+
+    - name: docker-container alertmanager
+      docker_container:
+        name: alertmanager
+        hostname: alertmanager
+        image: prom:alertmanager
+        restart_policy: on-failure
+        restart_retries: 3
+        cleanup: yes
+        purge_networks: yes
+        networks:
+          - name: proxy
+        ports:
+          - 9093:9093
+        volumes:
+          - "/etc/timezone:/etc/timezone:ro"
+          - "/etc/localtime:/etc/localtime:ro"
+          - "{{ docker_folder_config }}:/etc/alertmanager:ro"
+          - "alertmanager:/alertmanager"
+      tags: docker-containers
+
+    - name: docker-container blackbox-exporter
+      docker_container:
+        name: blackbox-exporter
+        hostname: blackbox-exporter
+        image: prom/blackbox-exporter
+        command: "--config.file=/etc/blackbox_exporter/blackbox-exporter.yml"
+        restart_policy: on-failure
+        restart_retries: 3
+        cleanup: yes
+        purge_networks: yes
+        networks:
+          - name: proxy
+        ports:
+          - 9115:9115
+        volumes:
+          - "/etc/timezone:/etc/timezone:ro"
+          - "/etc/localtime:/etc/localtime:ro"
+          - "{{ docker_folder_config }}:/etc/blackbox_exporter:ro"
+      tags: docker-containers
+
+    - name: docker-container grafana
+      docker_container:
+        name: grafana
+        hostname: grafana
+        image: grafana/grafana
+        restart_policy: on-failure
+        restart_retries: 3
+        cleanup: yes
+        purge_networks: yes
+        networks:
+          - name: proxy
+        ports:
+          - 3000:3000
+        volumes:
+          - "/etc/timezone:/etc/timezone:ro"
+          - "/etc/localtime:/etc/localtime:ro"
+          - "grafana:/var/lib/grafana"
+        environment:
+          GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel,percona-percona-app,ryantxu-ajax-panel,macropower-analytics-panel,sbueringer-consul-datasource"
+          GF_SECURITY_ADMIN_USER: "grafana"
+          GF_SECURITY_ADMIN_PASSWORD: "grafana"
+          GF_ALERTING_ENABLED: "true"
+          GF_ALERTING_EXECUTE_ALERTS: "true"
+          GF_METIRICS_ENABLED: "true"
